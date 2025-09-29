@@ -1,65 +1,46 @@
 pipeline {
-  agent any
+    agent any
 
-  environment {
-    IMAGE_NAME    = "nginx:latest"                     // 🔹 change this to your Docker image
-    REPORT_DIR    = "trivy-reports"
-    TEMPLATE_PATH = "/var/lib/jenkins/trivy-html.tpl"  // 🔹 path to HTML template (copied earlier)
-  }
-
-  stages {
-    stage('Trivy Scan') {
-      steps {
-        // Wrap with catchError so pipeline always continues
-        catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
-          sh '''
-            set -ex
-            mkdir -p ${REPORT_DIR}
-
-            echo "🔍 Running Trivy scan on ${IMAGE_NAME}..."
-
-            # JSON report
-            docker run --rm \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v "${PWD}/${REPORT_DIR}":/reports \
-              -v "${TEMPLATE_PATH}":/templates/html.tpl:ro \
-              aquasecurity/trivy:latest image \
-              --format json -o /reports/trivy-report.json ${IMAGE_NAME} || true
-
-            # HTML report
-            docker run --rm \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v "${PWD}/${REPORT_DIR}":/reports \
-              -v "${TEMPLATE_PATH}":/templates/html.tpl:ro \
-              aquasecurity/trivy:latest image \
-              --format template --template @/templates/html.tpl -o /reports/trivy-report.html ${IMAGE_NAME} || true
-
-            echo "✅ Trivy scan finished. Reports stored in ${REPORT_DIR}"
-            ls -la ${REPORT_DIR} || true
-          '''
+    stages {
+        stage('Trivy Scan JSON') {
+            steps {
+                // ✅ Create the folder here
+                sh '''
+                mkdir -p trivy-reports
+                docker run --rm \
+                  -v /var/run/docker.sock:/var/run/docker.sock \
+                  -v $PWD/trivy-reports:/reports \
+                  aquasecurity/trivy:latest image \
+                  --format json -o /reports/trivy-report.json nginx:latest
+                '''
+            }
         }
-      }
-    }
-  }
 
-  post {
-    always {
-      // Archive reports (ignore errors if files missing)
-      catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
-        archiveArtifacts artifacts: "${REPORT_DIR}/*", fingerprint: true, allowEmptyArchive: true
-      }
-
-      // Publish HTML report (ignore errors if missing)
-      catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
-        publishHTML([
-          allowMissing: true,
-          alwaysLinkToLastBuild: true,
-          keepAll: true,
-          reportDir: "${REPORT_DIR}",
-          reportFiles: "trivy-report.html",
-          reportName: "Trivy Vulnerability Report"
-        ])
-      }
+        stage('Trivy JSON to HTML') {
+            steps {
+                sh '''
+                docker run --rm \
+                  -v /var/run/docker.sock:/var/run/docker.sock \
+                  -v $PWD/trivy-reports:/reports \
+                  aquasecurity/trivy:latest image \
+                  --format template --template "@contrib/html.tpl" \
+                  -o /reports/trivy-report.html nginx:latest
+                '''
+            }
+        }
     }
-  }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'trivy-reports/*', fingerprint: true
+            publishHTML([
+              allowMissing: false,
+              alwaysLinkToLastBuild: true,
+              keepAll: true,
+              reportDir: 'trivy-reports',
+              reportFiles: 'trivy-report.html',
+              reportName: 'Trivy Vulnerability Report'
+            ])
+        }
+    }
 }
