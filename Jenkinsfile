@@ -2,81 +2,88 @@ pipeline {
   agent any
 
   environment {
-    IMAGE_NAME = "myapp:latest"                           // change as needed
+    IMAGE_NAME = "myapp:latest"                     // change to the image you want to scan
     REPORT_DIR  = "trivy-reports"
-    HTML_TEMPLATE = "/var/lib/jenkins/trivy-html.tpl"     // path from Step 1
-    FAIL_ON_CRITICAL = "true"                             // "true" or "false"
+    TEMPLATE_PATH = "/var/lib/jenkins/trivy-html.tpl"
   }
 
   stages {
-    stage('Checkout') {
+    stage('Prepare') {
       steps {
-        // change repo/branch or remove if not needed
-        git branch: 'main', url: 'https://github.com/your/repo.git'
+        sh '''
+          set -ex
+          mkdir -p ${REPORT_DIR}
+          echo "Working dir: $(pwd)"
+          echo "Template file listing:"
+          ls -l ${TEMPLATE_PATH} || true
+        '''
       }
     }
 
-    stage('Build Docker Image') {
+    stage('(Optional) Build Docker Image') {
       steps {
-        script {
-          // if you don't want to build image, remove this stage and set IMAGE_NAME to existing image
-          sh 'docker build -t ${IMAGE_NAME} .'
-        }
+        // remove this stage if you already have the image remotely
+        sh '''
+          set -ex
+          # build your image if needed
+          if [ -f Dockerfile ]; then
+            docker build -t ${IMAGE_NAME} .
+          else
+            echo "No Dockerfile found in workspace; skipping docker build."
+          fi
+        '''
       }
     }
 
-    stage('Trivy Scan - JSON + HTML') {
+    stage('Trivy scan using Trivy docker image') {
       steps {
-        script {
-          sh '''
-            set -e
-            mkdir -p ${REPORT_DIR}
+        sh '''
+          set -ex
 
-            # ensure DB up-to-date (optional but recommended)
-            trivy --download-db-only
+          # Pull latest trivy container
+          docker pull aquasecurity/trivy:latest || true
 
-            # 1) JSON report (raw)
-            trivy image --format json -o ${REPORT_DIR}/trivy-report.json ${IMAGE_NAME}
+          # Use dockerized trivy, mount docker socket so it can scan local images
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${PWD}/${REPORT_DIR}":/reports \
+            -v "${TEMPLATE_PATH}":/templates/html.tpl:ro \
+            aquasecurity/trivy:latest image --format json -o /reports/trivy-report.json ${IMAGE_NAME}
 
-            # 2) HTML report using template
-            trivy image --format template --template @${HTML_TEMPLATE} \
-              -o ${REPORT_DIR}/trivy-report.html ${IMAGE_NAME}
-          '''
-        }
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${PWD}/${REPORT_DIR}":/reports \
+            -v "${TEMPLATE_PATH}":/templates/html.tpl:ro \
+            aquasecurity/trivy:latest image --format template --template @/templates/html.tpl -o /reports/trivy-report.html ${IMAGE_NAME}
+
+          echo "Reports created:"
+          ls -la ${REPORT_DIR}
+        '''
       }
     }
 
-    stage('Fail on Critical (optional)') {
+    stage('Optional: Fail if critical found') {
       steps {
-        script {
-          sh '''
-            if [ "${FAIL_ON_CRITICAL}" = "true" ]; then
-              if ! command -v jq >/dev/null 2>&1; then
-                echo "jq not found - installing..."
-                sudo apt-get update && sudo apt-get install -y jq
-              fi
-
-              CRIT_COUNT=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' ${REPORT_DIR}/trivy-report.json)
-              echo "CRITICAL vulnerabilities: ${CRIT_COUNT}"
-              if [ "${CRIT_COUNT}" -gt 0 ]; then
-                echo "Failing build due to CRITICAL vulnerabilities."
-                exit 1
-              fi
-            else
-              echo "FAIL_ON_CRITICAL is false -> not failing build."
-            fi
-          '''
-        }
+        sh '''
+          set -ex
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq not found, installing (requires sudo)..."
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
+          CRIT_COUNT=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' ${REPORT_DIR}/trivy-report.json)
+          echo "CRITICAL vulnerabilities found: ${CRIT_COUNT}"
+          if [ "${CRIT_COUNT}" -gt 0 ]; then
+            echo "Failing build due to CRITICAL vulnerabilities."
+            exit 1
+          fi
+        '''
       }
     }
   }
 
   post {
     always {
-      // archive artifacts so you can download JSON/HTML
       archiveArtifacts artifacts: "${REPORT_DIR}/**", fingerprint: true, allowEmptyArchive: true
-
-      // publish HTML report (HTML Publisher plugin required)
       publishHTML([
         allowMissing: false,
         alwaysLinkToLastBuild: true,
@@ -86,9 +93,8 @@ pipeline {
         reportName: 'Trivy Vulnerability Report'
       ])
     }
-
     failure {
-      echo "Build failed — check console output and the archived trivy-reports."
+      echo 'Build failed — check console output and archived reports.'
     }
   }
 }
