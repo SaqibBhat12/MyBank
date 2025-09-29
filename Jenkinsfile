@@ -43,12 +43,14 @@ pipeline {
     always {
       archiveArtifacts artifacts: "${REPORT_DIR}/*", fingerprint: true
       publishHTML([
-        reportDir: "${REPORT_DIR}",
-        reportFiles: "trivy-report.html",
-        reportName: "Trivy Vulnerability Report",
-        keepAll: true,
-        alwaysLinkToLastBuild: true
-      ])
+  allowMissing: false,
+  alwaysLinkToLastBuild: true,
+  keepAll: true,
+  reportDir: "${REPORT_DIR}",
+  reportFiles: "trivy-report.html",
+  reportName: "Trivy Vulnerability Report"
+])
+
     }
   }
 }
