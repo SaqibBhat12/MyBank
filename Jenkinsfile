@@ -10,25 +10,24 @@ pipeline {
 
         stage('Run Trivy Scan') {
             steps {
-                sh '''
-                    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-                    -v $(pwd):/root/.cache/ aquasec/trivy image \
-                    --format json -o trivy-report.json nginx:latest
-                '''
+                // Scan the image and produce JSON output
+                sh 'trivy image --format json -o trivy-report.json nginx:latest'
             }
         }
 
         stage('Convert JSON to HTML') {
             steps {
+                // Use Python to convert Trivy JSON → HTML
                 sh '''
+                    echo "Converting JSON to HTML..."
                     python3 - <<'EOF'
 import json
-from json2html import json2html
-with open('trivy-report.json') as f:
+from json2html import *
+with open("trivy-report.json") as f:
     data = json.load(f)
 html = json2html.convert(json=data)
-with open('trivy-report.html', 'w') as f:
-    f.write(html)
+open("trivy-report.html", "w").write(html)
+print("✅ Conversion done: trivy-report.html")
 EOF
                 '''
             }
@@ -38,11 +37,10 @@ EOF
             steps {
                 publishHTML(target: [
                     allowMissing: false,
-                    alwaysLinkToLastBuild: true,
                     keepAll: true,
                     reportDir: '.',
                     reportFiles: 'trivy-report.html',
-                    reportName: 'Trivy Vulnerability Report'
+                    reportName: 'Trivy Scan Report'
                 ])
             }
         }
