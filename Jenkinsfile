@@ -1,40 +1,48 @@
 pipeline {
     agent any
 
-    environment {
-        IMAGE_NAME = 'nginx:latest'  // You can change this to your own image
-    }
-
     stages {
         stage('Pull Docker Image') {
             steps {
-                bat "docker pull ${IMAGE_NAME}"
+                sh 'docker pull nginx:latest'
             }
         }
 
         stage('Run Trivy Scan') {
             steps {
-                bat """
-                docker run --rm ^
-                    -v %cd%:/root/.cache/ ^
-                    aquasec/trivy image --format json -o trivy-report.json ${IMAGE_NAME}
-                """
+                sh '''
+                    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                    -v $(pwd):/root/.cache/ aquasec/trivy image \
+                    --format json -o trivy-report.json nginx:latest
+                '''
             }
         }
 
         stage('Convert JSON to HTML') {
             steps {
-                bat 'python json_to_html.py'
+                sh '''
+                    python3 - <<'EOF'
+import json
+from json2html import json2html
+with open('trivy-report.json') as f:
+    data = json.load(f)
+html = json2html.convert(json=data)
+with open('trivy-report.html', 'w') as f:
+    f.write(html)
+EOF
+                '''
             }
         }
 
         stage('Publish Trivy Report') {
             steps {
-                publishHTML (target: [
+                publishHTML(target: [
+                    allowMissing: false,
+                    alwaysLinkToLastBuild: true,
+                    keepAll: true,
                     reportDir: '.',
                     reportFiles: 'trivy-report.html',
-                    reportName: 'Trivy Security Report',
-                    keepAll: true
+                    reportName: 'Trivy Vulnerability Report'
                 ])
             }
         }
