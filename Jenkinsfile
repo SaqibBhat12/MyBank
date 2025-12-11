@@ -35,16 +35,16 @@ pytest -q || true
       }
     }
 
-    stage('Docker Build') {
-      steps {
-        sh '''#!/bin/bash
+   stage('Docker Build') {
+  steps {
+    sh '''#!/bin/bash
 set -euo pipefail
-echo "Building image ${DOCKER_IMAGE}..."
+echo "Building image ${DOCKER_IMAGE} from MyBankApp/..."
+cd MyBankApp
 docker build -t ${DOCKER_IMAGE} .
-docker images ${DOCKER_IMAGE} --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}"
 '''
-      }
-    }
+  }
+}
 
     stage('Trivy Image Scan (JSON + HTML)') {
       steps {
