@@ -1,14 +1,12 @@
-FROM python:3.11-slim
+# MyBankApp/Dockerfile (static website)
+FROM nginx:stable-alpine
+WORKDIR /usr/share/nginx/html
 
-WORKDIR /app
-
-# Install Python dependencies
-COPY requirements.txt .
-
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the application code
+# Remove default nginx content and copy your app
+RUN rm -rf ./*
 COPY . .
 
-# Start the app (change app.py if your entrypoint is different)
-CMD ["python", "app.py"]
+# Expose port (optional for local runs)
+EXPOSE 80
+
+# nginx default CMD is fine; nothing more needed
