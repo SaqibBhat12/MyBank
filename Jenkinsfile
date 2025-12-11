@@ -1,48 +1,45 @@
 pipeline {
     agent any
 
+    environment {
+        PYTHON = 'python3'
+    }
+
     stages {
-        stage('Pull Docker Image') {
+        stage('Checkout') {
             steps {
-                sh 'docker pull nginx:latest'
+                git branch: 'main', url: 'https://github.com/vansh2K5/simple-python-p2'
             }
         }
 
-        stage('Run Trivy Scan') {
+        stage('Setup Python Environment') {
             steps {
-                // Scan the image and produce JSON output
-                sh 'trivy image --format json -o trivy-report.json nginx:latest'
-            }
-        }
-
-        stage('Convert JSON to HTML') {
-            steps {
-                // Use Python to convert Trivy JSON → HTML
                 sh '''
-                    echo "Converting JSON to HTML..."
-                    python3 - <<'EOF'
-import json
-from json2html import *
-with open("trivy-report.json") as f:
-    data = json.load(f)
-html = json2html.convert(json=data)
-open("trivy-report.html", "w").write(html)
-print("✅ Conversion done: trivy-report.html")
-EOF
+                    set -e
+                    rm -rf venv
+                    $PYTHON -m venv venv
+                    venv/bin/python --version
+                    venv/bin/pip install --upgrade pip
+                    if [ -f requirements.txt ]; then
+                        venv/bin/pip install -r requirements.txt
+                    else
+                        echo "No requirements file found"
+                    fi
+                    venv/bin/pip install pytest
                 '''
             }
         }
 
-        stage('Publish Trivy Report') {
+        stage('Run Tests') {
             steps {
-                publishHTML(target: [
-                    allowMissing: false,
-                    keepAll: true,
-                    reportDir: '.',
-                    reportFiles: 'trivy-report.html',
-                    reportName: 'Trivy Scan Report'
-                ])
+                sh "venv/bin/python -m pytest tests"
             }
+        }
+    }
+
+    post {
+        always {
+            echo 'Pipeline completed.'
         }
     }
 }
