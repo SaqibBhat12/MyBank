@@ -1,8 +1,8 @@
 pipeline {
   agent any
   environment {
-    # image name uses build number so it won't clash
     DOCKER_IMAGE = "mybank-app:${BUILD_NUMBER}"
+    TRIVY_FS_SCAN = "false"
   }
 
   stages {
@@ -51,32 +51,24 @@ pipeline {
           set -euo pipefail
           echo "Scanning image ${DOCKER_IMAGE} with Trivy..."
 
-          # JSON report
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$WORKSPACE":/project \
             aquasec/trivy:latest image \
-            --format json \
-            --output /project/trivy-image-report.json \
-            ${DOCKER_IMAGE} || true
+            --format json --output /project/trivy-image-report.json ${DOCKER_IMAGE} || true
 
-          # HTML report (uses Trivy html template)
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$WORKSPACE":/project \
             aquasec/trivy:latest image \
-            --format template \
-            --template "@contrib/html.tpl" \
-            --output /project/trivy-image-report.html \
-            ${DOCKER_IMAGE} || true
+            --format template --template "@contrib/html.tpl" --output /project/trivy-image-report.html ${DOCKER_IMAGE} || true
 
-          echo "Trivy reports created in workspace"
+          echo "Trivy reports created: trivy-image-report.json and trivy-image-report.html"
         '''
       }
       post {
         always {
           sh '''
-            # if Docker created root-owned files, make sure Jenkins can archive them
             if [ -e "$WORKSPACE/trivy-image-report.html" ] || [ -e "$WORKSPACE/trivy-image-report.json" ]; then
               chown -R $(id -u):$(id -g) "$WORKSPACE" || true
             fi
@@ -86,15 +78,33 @@ pipeline {
       }
     }
 
-    // optional: add filesystem scan stage if you want later
+    stage('Trivy Filesystem Scan (optional)') {
+      when { expression { return env.TRIVY_FS_SCAN == 'true' } }
+      steps {
+        sh '''
+          set -euo pipefail
+          docker run --rm -v "$WORKSPACE":/project aquasec/trivy:latest fs /project \
+            --format json --output /project/trivy-fs-report.json || true
+
+          docker run --rm -v "$WORKSPACE":/project aquasec/trivy:latest fs /project \
+            --format template --template "@contrib/html.tpl" --output /project/trivy-fs-report.html || true
+        '''
+      }
+      post {
+        always {
+          sh 'chown -R $(id -u):$(id -g) "$WORKSPACE" || true'
+          archiveArtifacts artifacts: 'trivy-fs-report.*', fingerprint: true
+        }
+      }
+    }
   }
 
   post {
     always {
-      echo "Pipeline finished. Trivy reports (json + html) archived as artifacts."
+      echo "Pipeline finished. Find Trivy reports under Build → Artifacts."
     }
     failure {
-      echo "Pipeline failed — check Console Output for errors and artifacts for reports."
+      echo "Pipeline failed — check Console Output and archived artifacts for details."
     }
   }
 }
